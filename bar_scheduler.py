@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import random
 from openpyxl.utils import get_column_letter
 
-
+MOCK_DATA = False
 class BarScheduler:
     SHIFT_CONFIG = {
         "opening": {"color": "FFB4C6", "time": "12:30-17:00", "default_staff": 2},
@@ -52,8 +52,13 @@ class BarScheduler:
         self.YEAR = 2024
         self.MONTH = 11
         self.MONTH_NAME = self.MONTH_NAMES[self.MONTH]
+
         self.USERPATH = "/Users/martin/Desktop/"
         self.FILEPATH = self.USERPATH + f"{self.MONTH_NAME} (Svar) - Skjemasvar 1.csv"
+
+        if MOCK_DATA:
+            self.USERPATH = "/Users/martin/Desktop/bar-scheduler/"
+            self.FILEPATH = self.USERPATH + "mock_data.csv"
 
         self.WEEKDAY_REQUIREMENTS = {
             0: {"opening": 2, "middle": 2},  # Monday
@@ -371,6 +376,8 @@ class BarScheduler:
         )
 
     def create_schedule(self):
+        print(self.USERPATH + "members.txt")
+        print("/Users/martin/Desktop/bar-scheduler/members.txt")
         with open(self.USERPATH + "members.txt", "r") as f:
             all_members = [line.strip() for line in f if line.strip()]
         df = pd.read_csv(self.FILEPATH)
