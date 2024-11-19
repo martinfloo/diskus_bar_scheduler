@@ -5,7 +5,9 @@ from datetime import datetime, timedelta
 import random
 from openpyxl.utils import get_column_letter
 
-MOCK_DATA = False
+MOCK_DATA = True
+
+
 class BarScheduler:
     SHIFT_CONFIG = {
         "opening": {"color": "FFB4C6", "time": "12:30-17:00", "default_staff": 2},

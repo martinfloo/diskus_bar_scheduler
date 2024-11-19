@@ -62,6 +62,8 @@ Generates `{month}_schedule_{year}.xlsx`
 ```
 Name1
 Name2
+...
+Name_N
 ```
 
 ### CSV Requirements
