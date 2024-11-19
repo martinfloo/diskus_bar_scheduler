@@ -605,27 +605,6 @@ class BarScheduler:
                             avail_text.append(f"{date}: {', '.join(shifts)}")
                     ws_review[f"D{idx}"] = "\n".join(avail_text)
 
-        if self.manual_review:
-            ws_review = wb.create_sheet("Manual Review")
-            ws_review["A1"] = "Input Name"
-            ws_review["B1"] = "Possible Match"
-            ws_review["C1"] = "Confidence"
-            ws_review["D1"] = "Available Dates"
-
-            for idx, review in enumerate(self.manual_review, 2):
-                ws_review[f"A{idx}"] = review["input_name"]
-                ws_review[f"B{idx}"] = review["possible_match"]
-                ws_review[f"C{idx}"] = review.get("confidence", "N/A")
-
-                if review["input_name"] in self.unmatched_availability:
-                    avail_text = []
-                    for date, shifts in self.unmatched_availability[
-                        review["input_name"]
-                    ].items():
-                        if shifts:
-                            avail_text.append(f"{date}: {', '.join(shifts)}")
-                    ws_review[f"D{idx}"] = "\n".join(avail_text)
-
         sum_row = len(all_members) + 3
         ws.cell(row=sum_row, column=1, value="SUM OF SHIFTS")
 
