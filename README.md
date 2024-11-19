@@ -70,10 +70,12 @@ Name_N
 - Column: "Navn og etternavn" (names)
 - Date columns: "[Day]. [Month abbrev]"
 - Shift availability in cells
-
+![Example of Google forms input](images/example_submission_scheme.png)
+![Example of downloaded google forms to csv scheme](/images/example_csv_file.png)
 ## Output
 - Color-coded schedule
 - Shift/availability tracking
 - Weekend highlighting
 - Name matching review sheet
 - Daily totals
+![Example of xlsx file output](images/example_output_mock_data.png)
