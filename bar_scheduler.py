@@ -45,7 +45,7 @@ class BarScheduler:
                 return True
             date = datetime(self.YEAR, self.MONTH, day)
             return date.weekday() >= 5  # Saturday is 5, Sunday is 6
-        except:
+        except ValueError:
             return True
 
     def is_monday(self, date_str):
@@ -55,7 +55,7 @@ class BarScheduler:
                 return False
             date = datetime(self.YEAR, self.MONTH, day)
             return date.weekday() == 0  # Monday is 0 in Python's weekday()
-        except:
+        except ValueError:
             return False
 
     def get_available_shifts(self, date):
@@ -86,7 +86,7 @@ class BarScheduler:
                         )  # Changed from "nov"
 
             return weekend_dates
-        except:
+        except ValueError:
             return []
 
     def get_staff_requirement(self, date_str, shift_type):
@@ -105,7 +105,7 @@ class BarScheduler:
             }
 
             return requirements.get(weekday, {}).get(shift_type, 0)
-        except:
+        except Exception:
             return 2  # Default fallback
 
     def find_member_match(self, input_name, member_list):
@@ -710,4 +710,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
