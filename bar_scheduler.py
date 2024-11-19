@@ -338,6 +338,128 @@ class BarScheduler:
         for row in range(1, len(all_members) + 6):
             ws.row_dimensions[row].height = 22
 
+    def _assign_first_shifts(self, schedule, dates, staff_availability, all_members):
+        # Track assigned members
+        assigned_members = set()
+
+        # First handle members who responded
+        for staff_name, availability in staff_availability.items():
+            if staff_name in assigned_members:
+                continue
+
+            random.shuffle(availability)
+            for date, shifts in availability:
+                if not self.is_weekend(date) and not self.check_consecutive_days(
+                    schedule, staff_name, date, dates
+                ):
+                    valid_shifts = self.get_available_shifts(date)
+                    random.shuffle(valid_shifts)
+
+                    for shift in valid_shifts:
+                        if schedule[date][shift] is not None and len(
+                            schedule[date][shift]
+                        ) < self.get_staff_requirement(date, shift):
+                            schedule[date][shift].append(staff_name)
+                            assigned_members.add(staff_name)
+                            break
+                    if staff_name in assigned_members:
+                        break
+
+        # Then handle no-reply members
+        workdays = [date for date in dates if not self.is_weekend(date)]
+        for member in self.no_reply_members:
+            if member in assigned_members:
+                continue
+
+            random.shuffle(workdays)
+            for date in workdays:
+                valid_shifts = (
+                    ["opening", "middle"]
+                    if self.is_monday(date)
+                    else ["opening", "middle", "closing"]
+                )
+                random.shuffle(valid_shifts)
+
+                for shift in valid_shifts:
+                    if schedule[date][shift] is not None and len(
+                        schedule[date][shift]
+                    ) < self.get_staff_requirement(date, shift):
+                        schedule[date][shift].append(member)
+                        assigned_members.add(member)
+                        break
+                if member in assigned_members:
+                    break
+
+    def _assign_second_shifts(self, schedule, dates, staff_availability, all_members):
+        # Calculate unfilled slots
+        unfilled_slots = 0
+        for date in dates:
+            if self.is_weekend(date):
+                continue
+            for shift_type in ["opening", "middle", "closing"]:
+                if schedule[date][shift_type] is not None:
+                    required = self.get_staff_requirement(date, shift_type)
+                    current = len(schedule[date][shift_type])
+                    unfilled_slots += max(0, required - current)
+
+        if unfilled_slots > 0:
+            # Use similar logic to original assignment but for second shifts
+            # First handle members who responded
+            for staff_name, availability in staff_availability.items():
+                if (
+                    self._count_shifts(schedule, staff_name) >= 1
+                ):  # Only if they already have one shift
+                    random.shuffle(availability)
+                    for date, shifts in availability:
+                        if not self.is_weekend(
+                            date
+                        ) and not self.check_consecutive_days(
+                            schedule, staff_name, date, dates
+                        ):
+                            valid_shifts = self.get_available_shifts(date)
+                            random.shuffle(valid_shifts)
+
+                            for shift in valid_shifts:
+                                if schedule[date][shift] is not None and len(
+                                    schedule[date][shift]
+                                ) < self.get_staff_requirement(date, shift):
+                                    schedule[date][shift].append(staff_name)
+                                    break
+                            if self._count_shifts(schedule, staff_name) >= 2:
+                                break
+
+            # Then handle no-reply members if still needed
+            workdays = [date for date in dates if not self.is_weekend(date)]
+            for member in self.no_reply_members:
+                if (
+                    self._count_shifts(schedule, member) >= 1
+                ):  # Only if they already have one shift
+                    random.shuffle(workdays)
+                    for date in workdays:
+                        valid_shifts = (
+                            ["opening", "middle"]
+                            if self.is_monday(date)
+                            else ["opening", "middle", "closing"]
+                        )
+                        random.shuffle(valid_shifts)
+
+                        for shift in valid_shifts:
+                            if schedule[date][shift] is not None and len(
+                                schedule[date][shift]
+                            ) < self.get_staff_requirement(date, shift):
+                                schedule[date][shift].append(member)
+                                break
+                        if self._count_shifts(schedule, member) >= 2:
+                            break
+
+    def _count_shifts(self, schedule, staff_name):
+        return sum(
+            1
+            for date in schedule
+            for shift_type, staff_list in schedule[date].items()
+            if staff_list is not None and staff_name in staff_list
+        )
+
     def create_schedule(self):
         # Read member list
         with open(self.USERPATH + "members.txt", "r") as f:
@@ -352,38 +474,19 @@ class BarScheduler:
         ]
         dates = [col.split("[")[-1].split("]")[0].strip() for col in date_cols]
 
-        # Build complete dates list including weekends
-        all_dates = []
-        current_date = None
-        for i, date in enumerate(dates):
-            if current_date:
-                current_weekday = datetime(
-                    self.YEAR, self.MONTH, int(current_date.split(".")[0])
-                ).weekday()
-
-                next_weekday = datetime(
-                    self.YEAR, self.MONTH, int(date.split(".")[0])
-                ).weekday()
-
-                if current_weekday < 5 and next_weekday < 5:
-                    all_dates.extend(self.get_next_weekend_dates(current_date, date))
-            all_dates.append(date)
-            current_date = date
-
-        # Initialize schedule with proper Monday handling
+        # Initialize schedule
         schedule = {}
-        for date in all_dates:
+        for date in dates:
             schedule[date] = {
                 "opening": [],
                 "middle": [],
                 "closing": None if self.is_monday(date) else [],
             }
 
-        staff_availability = {}
-        staff_shifts = {member: 0 for member in all_members}
-
         # Process availability data
+        staff_availability = {}
         responding_members = set()
+
         for _, row in df.iterrows():
             input_name = row["Navn og etternavn"]
             matched_name = self.find_member_match(input_name, all_members)
@@ -391,13 +494,7 @@ class BarScheduler:
                 responding_members.add(matched_name)
                 availability = []
                 for date, col in zip(dates, date_cols):
-                    # Only get valid shifts for the specific day
-                    valid_shifts = self.get_available_shifts(date)
-                    shifts = [
-                        s
-                        for s in self.parse_shifts(row[col], date)
-                        if s in valid_shifts
-                    ]
+                    shifts = self.parse_shifts(row[col], date)
                     if shifts:
                         availability.append((date, shifts))
                 staff_availability[matched_name] = availability
@@ -405,72 +502,14 @@ class BarScheduler:
         # Identify no-reply members
         self.no_reply_members = set(all_members) - responding_members
 
-        # First pass: Assign primary shifts
-        for staff_name, availability in staff_availability.items():
-            if not availability:
-                continue
+        # First pass: Ensure everyone gets ONE shift
+        self._assign_first_shifts(schedule, dates, staff_availability, all_members)
 
-            random.shuffle(availability)
-            shifts_assigned = 0
-
-            for date, shifts in availability:
-                if shifts_assigned >= 2:
-                    break
-
-                if not self.is_weekend(date) and not self.check_consecutive_days(
-                    schedule, staff_name, date, all_dates
-                ):
-                    valid_shifts = self.get_available_shifts(date)
-                    random.shuffle(valid_shifts)
-
-                    for shift in valid_shifts:
-                        if schedule[date][shift] is not None and len(
-                            schedule[date][shift]
-                        ) < self.get_staff_requirement(date, shift):
-                            schedule[date][shift].append(staff_name)
-                            shifts_assigned += 1
-                            break
-
-        # Second pass: Fill remaining slots
-        for staff_name, availability in staff_availability.items():
-            current_shifts = sum(
-                1
-                for date in all_dates
-                for shift_type, staff_list in schedule[date].items()
-                if staff_list is not None and staff_name in staff_list
-            )
-
-            if current_shifts >= 2:
-                continue
-
-            random.shuffle(availability)
-            for date, shifts in availability:
-                if current_shifts >= 2:
-                    break
-
-                if not self.is_weekend(date) and not self.check_consecutive_days(
-                    schedule, staff_name, date, all_dates
-                ):
-                    valid_shifts = self.get_available_shifts(date)
-                    random.shuffle(valid_shifts)
-
-                    for shift in valid_shifts:
-                        if schedule[date][shift] is not None and len(
-                            schedule[date][shift]
-                        ) < self.get_staff_requirement(date, shift):
-                            schedule[date][shift].append(staff_name)
-                            current_shifts += 1
-                            break
-
-        # Handle no-reply members
-        self.assign_no_reply_shifts(schedule, all_dates, self.no_reply_members)
+        # Second pass: Only assign second shifts if all slots need to be filled
+        self._assign_second_shifts(schedule, dates, staff_availability, all_members)
 
         # Final validation
-        schedule = self.validate_schedule(schedule, all_dates)
-
-        for date in all_dates:
-            if self.is_monday(date):
-                schedule[date]["closing"] = None  # Force None for Monday closing shifts
+        schedule = self.validate_schedule(schedule, dates)
 
         # Create Excel output
         wb = Workbook()
@@ -479,11 +518,11 @@ class BarScheduler:
 
         # Add color legend
         legend_row = 1
-        ws.cell(row=legend_row, column=len(all_dates) + 5, value="Shift Colors:")
+        ws.cell(row=legend_row, column=len(dates) + 5, value="Shift Colors:")
         for idx, (shift_name, info) in enumerate(self.shifts.items(), 1):
             cell = ws.cell(
                 row=legend_row + idx,
-                column=len(all_dates) + 5,
+                column=len(dates) + 5,
                 value=f"{shift_name.capitalize()} ({info['time']})",
             )
             cell.fill = PatternFill(
@@ -492,7 +531,7 @@ class BarScheduler:
 
         # Headers
         ws["A1"] = "Name"
-        all_dates_with_type = [(date, self.is_weekend(date)) for date in all_dates]
+        all_dates_with_type = [(date, self.is_weekend(date)) for date in dates]
         for idx, (date, is_weekend) in enumerate(all_dates_with_type, 2):
             cell = ws.cell(row=1, column=idx, value=date)
             if is_weekend:
@@ -550,9 +589,9 @@ class BarScheduler:
                                 )
 
         # Clear any accidental Monday closing shifts
-        for date in all_dates:
+        for date in dates:
             if self.is_monday(date):
-                col_idx = all_dates.index(date) + 2
+                col_idx = dates.index(date) + 2
                 for row_idx in range(2, len(all_members) + 2):
                     cell = ws.cell(row=row_idx, column=col_idx)
                     if cell.fill.start_color.index == "C6FFB4":  # Closing shift color
@@ -568,12 +607,12 @@ class BarScheduler:
                             staff_shifts[staff] += 1
 
         # Add total shifts and availability columns
-        ws.cell(row=1, column=len(all_dates) + 2, value="Total Shifts")
-        ws.cell(row=1, column=len(all_dates) + 3, value="Available Days")
+        ws.cell(row=1, column=len(dates) + 2, value="Total Shifts")
+        ws.cell(row=1, column=len(dates) + 3, value="Available Days")
         for row_idx, name in enumerate(all_members, 2):
-            ws.cell(row=row_idx, column=len(all_dates) + 2, value=staff_shifts[name])
+            ws.cell(row=row_idx, column=len(dates) + 2, value=staff_shifts[name])
             available_count = len(staff_availability.get(name, []))
-            ws.cell(row=row_idx, column=len(all_dates) + 3, value=available_count)
+            ws.cell(row=row_idx, column=len(dates) + 3, value=available_count)
 
         # Create manual review sheet if needed
         if self.manual_review:
@@ -658,7 +697,7 @@ class BarScheduler:
                 ws.cell(row=sum_row + 3, column=1, value="CLOSING")
                 ws.cell(row=sum_row + 3, column=col_idx, value=closing_count)
 
-        self.apply_excel_formatting(ws, all_dates, all_members)
+        self.apply_excel_formatting(ws, dates, all_members)
 
         # Save the workbook
         save_path = (
