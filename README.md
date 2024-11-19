@@ -1,6 +1,14 @@
 # Bar Shift Scheduler
 
-Automated system for managing bar staff shifts and generating Excel schedules.
+Ever tried managing a bar with almost 90 employers, who all got their own preferences for when to work?
+
+bar_scheduler is my solution for the tedious manual work. 
+
+On average creating the shift list took 5-6 hours - now it only takes 1 second. 
+
+Get all your employers to answer for when to work in a google forms document. I have given a mock example in this repo. 
+
+Feel free to use my implemenation if you need it!
 
 ## Requirements
 - Python 3.6+
