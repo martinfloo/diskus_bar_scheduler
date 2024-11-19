@@ -140,13 +140,11 @@ class BarScheduler:
             if input_normalized == member_normalized:
                 score = 1.0
             elif input_parts and member_parts:
-                # Strong first name match
                 if normalize_name(input_name.split()[0]) == normalize_name(
                     member.split()[0]
                 ):
                     score = 0.95
                 else:
-                    # Part matching
                     common_parts = input_parts.intersection(member_parts)
                     score = (
                         len(common_parts) / len(input_parts.union(member_parts))
