@@ -50,6 +50,9 @@ class BarScheduler:
         12: "December",
     }
 
+    MIN_CONFIDENCE_THRESHOLD = 0.8
+    PARTIAL_MATCH_THRESHOLD = 0.5
+
     def __init__(self):
         self.YEAR = 2024
         self.MONTH = 11
@@ -157,9 +160,9 @@ class BarScheduler:
 
         if matches:
             best_match = max(matches, key=lambda x: x[1])
-            if best_match[1] >= 0.8:
+            if best_match[1] >= self.MIN_CONFIDENCE_THRESHOLD:
                 return best_match[0]
-            elif best_match[1] >= 0.5:
+            elif best_match[1] >= self.PARTIAL_MATCH_THRESHOLD:
                 self.manual_review.append(
                     {
                         "input_name": input_name,
@@ -378,8 +381,11 @@ class BarScheduler:
     def create_schedule(self):
         print(self.USERPATH + "members.txt")
         print("/Users/martin/Desktop/bar-scheduler/members.txt")
-        with open(self.USERPATH + "members.txt", "r") as f:
-            all_members = [line.strip() for line in f if line.strip()]
+        try:
+            with open(self.USERPATH + "members.txt", "r") as f:
+                all_members = [line.strip() for line in f if line.strip()]
+        except FileNotFoundError:
+            raise FileNotFoundError("Could not find members.txt file")
         df = pd.read_csv(self.FILEPATH)
 
         date_cols = [
