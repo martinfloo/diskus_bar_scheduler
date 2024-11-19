@@ -41,25 +41,18 @@ class BarScheduler:
     def is_weekend(self, date_str):
         try:
             day = int(date_str.split(".")[0])
-            if day < 1 or day > 31:
-                return True
-            date = datetime(self.YEAR, self.MONTH, day)
-            return date.weekday() >= 5  # Saturday is 5, Sunday is 6
+            return datetime(self.YEAR, self.MONTH, day).weekday() >= 5
         except ValueError:
             return True
 
     def is_monday(self, date_str):
         try:
             day = int(date_str.split(".")[0])
-            if day < 1 or day > 31:  # Using 31 as a safe upper bound
-                return False
-            date = datetime(self.YEAR, self.MONTH, day)
-            return date.weekday() == 0  # Monday is 0 in Python's weekday()
+            return datetime(self.YEAR, self.MONTH, day).weekday() == 0
         except ValueError:
             return False
 
     def get_available_shifts(self, date):
-        """Helper method to get available shifts for a given date"""
         if self.is_monday(date):
             return ["opening", "middle"]  # No closing shift on Mondays
         return ["opening", "middle", "closing"]
@@ -90,11 +83,9 @@ class BarScheduler:
             return []
 
     def get_staff_requirement(self, date_str, shift_type):
-        """Get required staff count based on day and shift"""
         try:
             day = int(date_str.split(".")[0])
-            date = datetime(self.YEAR, self.MONTH, day)
-            weekday = date.weekday()  # 0 is Monday, 6 is Sunday
+            weekday = datetime(self.YEAR, self.MONTH, day).weekday()
 
             requirements = {
                 0: {"opening": 2, "middle": 2, "closing": 0},  # Monday
@@ -104,64 +95,63 @@ class BarScheduler:
                 4: {"opening": 2, "middle": 3, "closing": 3},  # Friday
             }
 
-            return requirements.get(weekday, {}).get(shift_type, 0)
-        except Exception:
-            return 2  # Default fallback
+            return requirements.get(weekday, {}).get(shift_type, 2)
+        except ValueError:
+            return 2
 
     def find_member_match(self, input_name, member_list):
         def normalize_name(name):
             return "".join(c.lower() for c in name if c.isalnum())
 
-        def name_similarity(name1, name2):
-            n1 = normalize_name(name1)
-            n2 = normalize_name(name2)
+        # Direct match first
+        if input_name.lower() in (m.lower() for m in member_list):
+            return next(m for m in member_list if m.lower() == input_name.lower())
 
-            if n1 == n2:
-                return 1.0
-
-            parts1 = set(normalize_name(p) for p in name1.split())
-            parts2 = set(normalize_name(p) for p in name2.split())
-
-            # Strong first name matching regardless of last name
-            if parts1 and parts2:
-                first1 = normalize_name(name1.split()[0])
-                first2 = normalize_name(name2.split()[0])
-                if first1 == first2:
-                    return 0.95  # High confidence for exact first name match
-
-            # Fall back to overall similarity if first names don't match
-            common_parts = parts1.intersection(parts2)
-            total_parts = parts1.union(parts2)
-
-            if common_parts:
-                return len(common_parts) / len(total_parts)
-
-            return 0.0
+        # Compute similarities
+        matches = []
+        input_normalized = normalize_name(input_name)
+        input_parts = set(normalize_name(p) for p in input_name.split())
 
         for member in member_list:
-            if member.lower() == input_name.lower():
-                return member
+            member_normalized = normalize_name(member)
+            member_parts = set(normalize_name(p) for p in member.split())
 
-        best_match = None
-        best_score = 0
+            # Calculate confidence score
+            score = 0
+            if input_normalized == member_normalized:
+                score = 1.0
+            elif input_parts and member_parts:
+                # Strong first name match
+                if normalize_name(input_name.split()[0]) == normalize_name(
+                    member.split()[0]
+                ):
+                    score = 0.95
+                else:
+                    # Part matching
+                    common_parts = input_parts.intersection(member_parts)
+                    score = (
+                        len(common_parts) / len(input_parts.union(member_parts))
+                        if common_parts
+                        else 0
+                    )
 
-        for member in member_list:
-            score = name_similarity(input_name, member)
-            if score > best_score and score >= 0.5:
-                best_score = score
-                best_match = member
+            if score > 0:
+                matches.append((member, score))
 
-        if best_match:
-            if best_score >= 0.8:
-                return best_match
-            self.manual_review.append(
-                {
-                    "input_name": input_name,
-                    "possible_match": best_match,
-                    "confidence": f"{best_score:.2f}",
-                }
-            )
-            return best_match
+        # Get best match
+        if matches:
+            best_match = max(matches, key=lambda x: x[1])
+            if best_match[1] >= 0.8:
+                return best_match[0]
+            elif best_match[1] >= 0.5:
+                self.manual_review.append(
+                    {
+                        "input_name": input_name,
+                        "possible_match": best_match[0],
+                        "confidence": f"{best_match[1]:.2f}",
+                    }
+                )
+                return best_match[0]
 
         self.manual_review.append(
             {
@@ -173,20 +163,23 @@ class BarScheduler:
         return input_name
 
     def parse_shifts(self, cell_value, date_str):
-        shifts = []
         if (
-            isinstance(cell_value, str)
-            and "Kan ikke jobbe denne dagen" not in cell_value
+            not isinstance(cell_value, str)
+            or "Kan ikke jobbe denne dagen" in cell_value
         ):
-            if "12:30-17:00" in cell_value:
-                shifts.append("opening")
-            if "16:50-20:30" in cell_value:
-                shifts.append("middle")
-            if "20:20-00:30" in cell_value and not self.is_monday(date_str):
-                shifts.append("closing")
-        # Extra safety check
-        if self.is_monday(date_str):
-            shifts = [s for s in shifts if s != "closing"]
+            return []
+
+        shifts = []
+        shift_times = {
+            "opening": "12:30-17:00",
+            "middle": "16:50-20:30",
+            "closing": "20:20-00:30",
+        }
+
+        for shift_type, time in shift_times.items():
+            if time in cell_value:
+                if not (self.is_monday(date_str) and shift_type == "closing"):
+                    shifts.append(shift_type)
         return shifts
 
     def check_consecutive_days(self, schedule, staff_name, current_date, dates):
@@ -200,20 +193,17 @@ class BarScheduler:
         return False
 
     def assign_no_reply_shifts(self, schedule, all_dates, no_reply_members):
-        """
-        Assigns shifts to members who didn't reply to the availability survey.
-        Ensures proper handling of Monday shifts and staff limits.
-        """
+        workdays = [date for date in all_dates if not self.is_weekend(date)]
+
         for member in no_reply_members:
-            shifts_to_assign = 2
-            workdays = [date for date in all_dates if not self.is_weekend(date)]
+            shifts_needed = 2
             random.shuffle(workdays)
 
+            # First pass - try to fill required slots
             for date in workdays:
-                if shifts_to_assign <= 0:
+                if shifts_needed <= 0:
                     break
 
-                # Get valid shifts and explicitly exclude closing on Mondays
                 valid_shifts = (
                     ["opening", "middle"]
                     if self.is_monday(date)
@@ -222,19 +212,15 @@ class BarScheduler:
                 random.shuffle(valid_shifts)
 
                 for shift in valid_shifts:
-                    # Double-check that we're not assigning closing shifts on Monday
-                    if self.is_monday(date) and shift == "closing":
-                        continue
-
                     if schedule[date][shift] is not None and len(
                         schedule[date][shift]
                     ) < self.get_staff_requirement(date, shift):
                         schedule[date][shift].append(member)
-                        shifts_to_assign -= 1
+                        shifts_needed -= 1
                         break
 
-            # Ensure at least one shift is assigned if none were assigned above
-            if shifts_to_assign == 2:  # No shifts were assigned
+            # Ensure at least one shift if none assigned
+            if shifts_needed == 2:
                 for date in workdays:
                     valid_shifts = (
                         ["opening", "middle"]
@@ -252,47 +238,31 @@ class BarScheduler:
                     break
 
     def validate_schedule(self, schedule, all_dates):
-        """
-        Validates and sanitizes the final schedule.
-        Ensures no closing shifts on Mondays and maintains shift integrity.
-        """
         for date in all_dates:
-            # Strictly handle Mondays - no exceptions
             if self.is_monday(date):
                 # Force closing to None on Mondays
                 schedule[date]["closing"] = None
 
-                # Only validate opening and middle shifts on Mondays
+                # Validate Monday shifts
                 for shift in ["opening", "middle"]:
                     if schedule[date][shift] is not None:
-                        current_staff = schedule[date][shift]
-                        required_staff = self.get_staff_requirement(date, shift)
-                        if len(current_staff) > required_staff:
-                            schedule[date][shift] = current_staff[:required_staff]
+                        required = self.get_staff_requirement(date, shift)
+                        schedule[date][shift] = schedule[date][shift][:required]
             else:
                 # Handle non-Monday days
                 for shift_type in ["opening", "middle", "closing"]:
                     if schedule[date][shift_type] is not None:
-                        current_staff = schedule[date][shift_type]
-                        required_staff = self.get_staff_requirement(date, shift_type)
-                        if len(current_staff) > required_staff:
-                            schedule[date][shift_type] = current_staff[:required_staff]
-
-        # Final safety check - ensure no Monday closing shifts
-        for date in all_dates:
-            if self.is_monday(date):
-                schedule[date]["closing"] = None
+                        required = self.get_staff_requirement(date, shift_type)
+                        schedule[date][shift_type] = schedule[date][shift_type][
+                            :required
+                        ]
 
         return schedule
 
     def format_date_str(self, day):
-        """Helper method to format date strings consistently"""
         return f"{day}. {self.MONTH_NAME[:3].lower()}"
 
     def apply_excel_formatting(self, ws, all_dates, all_members):
-        """
-        Apply formatting while preserving no-reply member styling.
-        """
         # Freeze panes
         ws.freeze_panes = "B2"
 
@@ -369,10 +339,6 @@ class BarScheduler:
             ws.row_dimensions[row].height = 22
 
     def create_schedule(self):
-        """
-        Creates the complete bar schedule with proper handling of shifts and validations.
-        Ensures no closing shifts on Mondays and proper staff distribution.
-        """
         # Read member list
         with open(self.USERPATH + "members.txt", "r") as f:
             all_members = [line.strip() for line in f if line.strip()]
