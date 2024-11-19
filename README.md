@@ -6,7 +6,9 @@ bar_scheduler is my solution for the tedious manual work.
 
 On average creating the shift list took 5-6 hours - now it only takes 1 second. 
 
-Get all your employers to answer for when to work in a google forms document. I have given a mock example in this repo. 
+Get all your employers to answer for when to work in a google forms document. 
+
+I have given a mock example with both members and available days in this repo. 
 
 Feel free to use my implemenation if you need it!
 
