@@ -5,11 +5,12 @@ from datetime import datetime, timedelta
 import random
 from openpyxl.utils import get_column_letter
 
-MOCK_DATA = True
+MOCK_DATA = False
 
 
 class BarScheduler:
     SHIFT_CONFIG = {
+        "morning": {"color": "FFE4B5", "time": "08:45-12:30", "default_staff": 2},
         "opening": {"color": "FFB4C6", "time": "12:30-17:00", "default_staff": 2},
         "middle": {"color": "B4D7FF", "time": "16:50-20:30", "default_staff": 3},
         "closing": {"color": "C6FFB4", "time": "20:20-00:30", "default_staff": 3},
@@ -65,7 +66,7 @@ class BarScheduler:
             self.USERPATH = "/Users/martin/Desktop/bar-scheduler/"
             self.FILEPATH = self.USERPATH + "mock_data.csv"
 
-        self.WEEKDAY_REQUIREMENTS = {
+        base_requirements = {
             0: {"opening": 2, "middle": 2},  # Monday
             1: {s: c["default_staff"] for s, c in self.SHIFT_CONFIG.items()},  # Tuesday
             2: {
@@ -74,11 +75,13 @@ class BarScheduler:
             3: {"opening": 2, "middle": 2, "closing": 2},  # Thursday
             4: {s: c["default_staff"] for s, c in self.SHIFT_CONFIG.items()},  # Friday
         }
+        self.WEEKDAY_REQUIREMENTS = base_requirements.copy()
         self.weekend_color = "808080"
         self.no_reply_color = "404040"
         self.manual_review = []
         self.unmatched_availability = {}
         self.no_reply_members = set()
+        self.morning_shift_dates = set()
 
     def format_date(self, day):
         return f"{day}. {self.MONTH_NAME[:3].lower()}"
@@ -97,9 +100,20 @@ class BarScheduler:
         return self.get_weekday(date_str) == 0
 
     def get_available_shifts(self, date):
+        valid_shifts = []
+        date_str = date.strip()
+        if " - " in date_str:
+            date_str = date_str.split(" - ")[0]
+
+        if self._is_morning_shift_date(date_str):
+            valid_shifts.append("morning")
+
         if self.is_monday(date):
-            return ["opening", "middle"]
-        return ["opening", "middle", "closing"]
+            valid_shifts.extend(["opening", "middle"])
+        elif not self.is_weekend(date):
+            valid_shifts.extend(["opening", "middle", "closing"])
+
+        return valid_shifts
 
     def get_next_weekend_dates(self, current_date, next_date):
         try:
@@ -123,6 +137,19 @@ class BarScheduler:
         return self.WEEKDAY_REQUIREMENTS.get(weekday, {}).get(
             shift_type, self.SHIFT_CONFIG[shift_type]["default_staff"]
         )
+
+    def get_morning_shift_dates(self, df):
+        morning_cols = [col for col in df.columns if "kan du ha morgenvakt?" in col]
+        morning_dates = set()
+
+        for col in morning_cols:
+            try:
+                date_part = col.split("[")[-1].split("]")[0]
+                morning_dates.add(date_part)
+            except IndexError:
+                print(f"Warning: Could not parse date from column: {col}")
+
+        return morning_dates
 
     def find_member_match(self, input_name, member_list):
         def normalize_name(name):
@@ -181,25 +208,51 @@ class BarScheduler:
         )
         return input_name
 
-    def parse_shifts(self, cell_value, date_str):
-        if (
-            not isinstance(cell_value, str)
-            or "Kan ikke jobbe denne dagen" in cell_value
-        ):
-            return []
-
+    def parse_shifts(self, row, date_str):
         shifts = []
-        shift_times = {
-            "opening": "12:30-17:00",
-            "middle": "16:50-20:30",
-            "closing": "20:20-00:30",
-        }
+        date_check = date_str.split(" - ")[0] if " - " in date_str else date_str
 
-        for shift_type, time in shift_times.items():
-            if time in cell_value:
-                if not (self.is_monday(date_str) and shift_type == "closing"):
-                    shifts.append(shift_type)
+        date_col = next((col for col in row.index if date_str in col), None)
+        if date_col:
+            cell_value = row[date_col]
+            if (
+                isinstance(cell_value, str)
+                and "Kan ikke jobbe denne dagen" not in cell_value
+            ):
+                shift_times = {
+                    "opening": "12:30-17:00",
+                    "middle": "16:50-20:30",
+                    "closing": "20:20-00:30",
+                }
+                for shift_type, time in shift_times.items():
+                    if time in cell_value:
+                        if not (self.is_monday(date_str) and shift_type == "closing"):
+                            shifts.append(shift_type)
+
+        day = int(date_check.split(".")[0])
+        month_abbrev = self.MONTH_NAME[:3].lower()
+        morning_cols = [col for col in row.index if "kan du ha morgenvakt?" in col]
+
+        for morning_col in morning_cols:
+            if f"[{day}. {month_abbrev}]" in morning_col and row[morning_col] == "Ja":
+                shifts.append("morning")
+                break
+
         return shifts
+
+    def update_shift_requirements(self, df):
+        morning_dates = self.get_morning_shift_dates(df)
+        for date in morning_dates:
+            try:
+                weekday = self.get_weekday(date)
+                if weekday in self.WEEKDAY_REQUIREMENTS:
+                    current_reqs = self.WEEKDAY_REQUIREMENTS[weekday]
+                    current_reqs["morning"] = self.SHIFT_CONFIG["morning"][
+                        "default_staff"
+                    ]
+                    self.WEEKDAY_REQUIREMENTS[weekday] = current_reqs
+            except ValueError:
+                print(f"Warning: Could not process morning shift date: {date}")
 
     def check_consecutive_days(self, schedule, staff_name, current_date, dates):
         current_idx = dates.index(current_date)
@@ -256,17 +309,21 @@ class BarScheduler:
 
     def validate_schedule(self, schedule, all_dates):
         for date in all_dates:
+            if self.is_weekend(date):
+                continue
+
             if self.is_monday(date):
                 schedule[date]["closing"] = None
 
-                for shift in ["opening", "middle"]:
-                    if schedule[date][shift] is not None:
-                        required = self.get_staff_requirement(date, shift)
-                        schedule[date][shift] = schedule[date][shift][:required]
-            else:
-                for shift_type in ["opening", "middle", "closing"]:
-                    if schedule[date][shift_type] is not None:
-                        required = self.get_staff_requirement(date, shift_type)
+            for shift_type in self.SHIFT_CONFIG:
+                if schedule[date].get(shift_type) is not None:
+                    required = self.get_staff_requirement(date, shift_type)
+                    if isinstance(schedule[date][shift_type], list):
+                        current = len(schedule[date][shift_type])
+                        if current > required:
+                            print(
+                                f"Warning: {date} {shift_type} has {current} people, limiting to {required}"
+                            )
                         schedule[date][shift_type] = schedule[date][shift_type][
                             :required
                         ]
@@ -300,7 +357,7 @@ class BarScheduler:
                 cell.alignment = Alignment(horizontal="center", vertical="center")
 
         sum_row = len(all_members) + 3
-        total_rows = [sum_row, sum_row + 1, sum_row + 2, sum_row + 3]
+        total_rows = [sum_row, sum_row + 1, sum_row + 2, sum_row + 3, sum_row + 4]
 
         for row in total_rows:
             cell = ws.cell(row=row, column=1)
@@ -358,16 +415,30 @@ class BarScheduler:
                 if self._try_assign_shift(schedule, date, valid_shifts, member):
                     if self._count_shifts(schedule, member) >= shifts_needed:
                         break
+
         return schedule
 
     def _try_assign_shift(self, schedule, date, valid_shifts, staff_name):
-        random.shuffle(valid_shifts)
-        for shift in valid_shifts:
-            if schedule[date][shift] is not None and len(
-                schedule[date][shift]
-            ) < self.get_staff_requirement(date, shift):
-                schedule[date][shift].append(staff_name)
+        if self._has_shift_on_date(schedule, date, staff_name):
+            return False
+
+        if "morning" in valid_shifts and schedule[date].get("morning") is not None:
+            required = self.get_staff_requirement(date, "morning")
+            current = len(schedule[date]["morning"])
+            if current < required:
+                schedule[date]["morning"].append(staff_name)
                 return True
+
+        other_shifts = [s for s in valid_shifts if s != "morning"]
+        random.shuffle(other_shifts)
+        for shift in other_shifts:
+            if schedule[date].get(shift) is not None:
+                required = self.get_staff_requirement(date, shift)
+                current = len(schedule[date][shift])
+                if current < required:
+                    schedule[date][shift].append(staff_name)
+                    return True
+
         return False
 
     def _count_shifts(self, schedule, staff_name):
@@ -378,15 +449,36 @@ class BarScheduler:
             if staff_list is not None and staff_name in staff_list
         )
 
+    def _is_morning_shift_date(self, date):
+        if " - " in date:
+            date = date.split(" - ")[0]
+        return date in self.morning_shift_dates
+
+    def initialize_schedule(self, date, morning_shift_dates):
+        schedule = {
+            "morning": [] if self._is_morning_shift_date(date.strip()) else None,
+            "opening": [],
+            "middle": [],
+            "closing": None if self.is_monday(date) else [],
+        }
+        return schedule
+
+    def _has_shift_on_date(self, schedule, date, staff_name):
+        for shift_type, staff_list in schedule[date].items():
+            if staff_list is not None and staff_name in staff_list:
+                return True
+        return False
+
     def create_schedule(self):
-        print(self.USERPATH + "members.txt")
-        print("/Users/martin/Desktop/bar-scheduler/members.txt")
         try:
             with open(self.USERPATH + "members.txt", "r") as f:
                 all_members = [line.strip() for line in f if line.strip()]
         except FileNotFoundError:
             raise FileNotFoundError("Could not find members.txt file")
+
         df = pd.read_csv(self.FILEPATH)
+        self.morning_shift_dates = self.get_morning_shift_dates(df)
+        self.update_shift_requirements(df)
 
         date_cols = [
             col
@@ -413,13 +505,11 @@ class BarScheduler:
         schedule = {}
         for date in all_dates:
             if self.is_weekend(date):
-                schedule[date] = {"opening": None, "middle": None, "closing": None}
+                schedule[date] = {shift_type: None for shift_type in self.SHIFT_CONFIG}
             else:
-                schedule[date] = {
-                    "opening": [],
-                    "middle": [],
-                    "closing": None if self.is_monday(date) else [],
-                }
+                schedule[date] = self.initialize_schedule(
+                    date, self.morning_shift_dates
+                )
 
         staff_availability = {}
         responding_members = set()
@@ -430,21 +520,20 @@ class BarScheduler:
             if matched_name in all_members:
                 responding_members.add(matched_name)
                 availability = []
-                for date, col in zip(work_dates, date_cols):
-                    shifts = self.parse_shifts(row[col], date)
+
+                for date in work_dates:
+                    shifts = self.parse_shifts(row, date)
                     if shifts:
                         availability.append((date, shifts))
                 staff_availability[matched_name] = availability
 
         self.no_reply_members = set(all_members) - responding_members
-
         self.assign_shifts(
             schedule, work_dates, staff_availability, all_members, shifts_needed=1
         )
         self.assign_shifts(
             schedule, work_dates, staff_availability, all_members, shifts_needed=2
         )
-
         schedule = self.validate_schedule(schedule, all_dates)
 
         wb = Workbook()
@@ -499,26 +588,16 @@ class BarScheduler:
                         fill_type="solid",
                     )
                 else:
-                    if self.is_monday(date):
-                        for shift, staff_list in schedule[date].items():
-                            if (
-                                shift != "closing"
-                                and staff_list is not None
-                                and name in staff_list
-                            ):
-                                cell.fill = PatternFill(
-                                    start_color=self.SHIFT_CONFIG[shift]["color"],
-                                    end_color=self.SHIFT_CONFIG[shift]["color"],
-                                    fill_type="solid",
-                                )
-                    else:
-                        for shift, staff_list in schedule[date].items():
-                            if staff_list is not None and name in staff_list:
-                                cell.fill = PatternFill(
-                                    start_color=self.SHIFT_CONFIG[shift]["color"],
-                                    end_color=self.SHIFT_CONFIG[shift]["color"],
-                                    fill_type="solid",
-                                )
+                    for shift_type in ["morning", "opening", "middle", "closing"]:
+                        if (
+                            schedule[date].get(shift_type) is not None
+                            and name in schedule[date][shift_type]
+                        ):
+                            cell.fill = PatternFill(
+                                start_color=self.SHIFT_CONFIG[shift_type]["color"],
+                                end_color=self.SHIFT_CONFIG[shift_type]["color"],
+                                fill_type="solid",
+                            )
 
         for date in all_dates:
             if self.is_monday(date):
@@ -530,7 +609,12 @@ class BarScheduler:
 
         staff_shifts = {member: 0 for member in all_members}
         for date in all_dates:
-            for shift_type in ["opening", "middle", "closing"]:
+            for shift_type in [
+                "morning",
+                "opening",
+                "middle",
+                "closing",
+            ]:
                 if schedule[date].get(shift_type) is not None:
                     for staff in schedule[date][shift_type]:
                         if staff in staff_shifts:
@@ -569,6 +653,11 @@ class BarScheduler:
 
         for col_idx, date in enumerate(all_dates, 2):
             if not self.is_weekend(date):
+                morning_count = (
+                    len(schedule[date]["morning"])
+                    if schedule[date]["morning"] is not None
+                    else 0
+                )
                 opening_count = (
                     len(schedule[date]["opening"])
                     if schedule[date]["opening"] is not None
@@ -588,17 +677,20 @@ class BarScheduler:
                 ws.cell(
                     row=sum_row,
                     column=col_idx,
-                    value=opening_count + middle_count + closing_count,
+                    value=morning_count + opening_count + middle_count + closing_count,
                 )
 
-                ws.cell(row=sum_row + 1, column=1, value="OPENING")
-                ws.cell(row=sum_row + 1, column=col_idx, value=opening_count)
+                ws.cell(row=sum_row + 1, column=1, value="MORNING")
+                ws.cell(row=sum_row + 1, column=col_idx, value=morning_count)
 
-                ws.cell(row=sum_row + 2, column=1, value="MIDDAY")
-                ws.cell(row=sum_row + 2, column=col_idx, value=middle_count)
+                ws.cell(row=sum_row + 2, column=1, value="OPENING")
+                ws.cell(row=sum_row + 2, column=col_idx, value=opening_count)
 
-                ws.cell(row=sum_row + 3, column=1, value="CLOSING")
-                ws.cell(row=sum_row + 3, column=col_idx, value=closing_count)
+                ws.cell(row=sum_row + 3, column=1, value="MIDDAY")
+                ws.cell(row=sum_row + 3, column=col_idx, value=middle_count)
+
+                ws.cell(row=sum_row + 4, column=1, value="CLOSING")
+                ws.cell(row=sum_row + 4, column=col_idx, value=closing_count)
 
         self.apply_excel_formatting(ws, all_dates, all_members)
 
