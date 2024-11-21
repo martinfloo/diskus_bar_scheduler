@@ -56,12 +56,13 @@ class BarScheduler:
 
     def __init__(self):
         self.YEAR = 2024
-        self.MONTH = 11
+        self.MONTH = 12
         self.MONTH_NAME = self.MONTH_NAMES[self.MONTH]
 
         self.USERPATH = "/Users/martin/Desktop/"
         self.FILEPATH = self.USERPATH + f"{self.MONTH_NAME} (Svar) - Skjemasvar 1.csv"
-
+        if self.FILEPATH == "Users/martin/Desktop/December (Svar) - Skjemasvar 1.csv":
+            print("HEI MAMMA")
         if MOCK_DATA:
             self.USERPATH = "/Users/martin/Desktop/bar-scheduler/"
             self.FILEPATH = self.USERPATH + "mock_data.csv"
