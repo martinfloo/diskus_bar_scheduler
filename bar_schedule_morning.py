@@ -63,7 +63,7 @@ class BarScheduler:
         self.MONTH_NAME = self.MONTH_NAMES[self.MONTH]
 
         self.USERPATH = "/Users/martin/Desktop/"
-        self.FILEPATH = self.USERPATH + f"{self.MONTH_NAME}<"
+        self.FILEPATH = self.USERPATH + f"{self.MONTH_NAME} (Svar) - Skjemasvar 1.csv"
 
         if MOCK_DATA:
             self.USERPATH = "/Users/martin/Desktop/bar-scheduler/"
@@ -747,11 +747,10 @@ class BarScheduler:
                                         f"Warning: {staff} assigned to {shift_type} shift on {date} but didn't sign up for it!"
                                     )
 
-            save_path = (
-                f"{self.USERPATH}{self.MONTH_NAME.lower()}_schedule_{self.YEAR}.xlsx"
-            )
-            print(f"\nSaving schedule to: {save_path}")
-            wb.save(save_path)
+        save_path = (
+            f"{self.USERPATH}{self.MONTH_NAME.lower()}_schedule_{self.YEAR}.xlsx"
+        )
+        print(f"\nSaving schedule to: {save_path}")
         wb.save(save_path)
 
 
