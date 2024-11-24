@@ -9,6 +9,7 @@ from openpyxl.utils import get_column_letter
 MOCK_DATA = False
 # CHOOSE YEAR HERE
 MONTH = 12  # December
+SEED = 42
 
 
 class BarScheduler:
@@ -499,6 +500,7 @@ class BarScheduler:
         return False
 
     def create_schedule(self):
+        random.seed(SEED)
         try:
             with open(self.USERPATH + "members.txt", "r") as f:
                 all_members = [line.strip() for line in f if line.strip()]
