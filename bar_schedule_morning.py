@@ -1,8 +1,9 @@
+import random
+from datetime import datetime, timedelta
+
 import pandas as pd
 from openpyxl import Workbook
-from openpyxl.styles import Alignment, Border, PatternFill, Font, Side
-from datetime import datetime, timedelta
-import random
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 MOCK_DATA = False
@@ -50,7 +51,7 @@ class BarScheduler:
         9: "September",
         10: "October",
         11: "November",
-        12: "December",
+        12: "Desember",
     }
 
     MIN_CONFIDENCE_THRESHOLD = 0.8
@@ -62,19 +63,18 @@ class BarScheduler:
         self.MONTH_NAME = self.MONTH_NAMES[self.MONTH]
 
         self.USERPATH = "/Users/martin/Desktop/"
-        self.FILEPATH = self.USERPATH + f"{self.MONTH_NAME} (Svar) - Skjemasvar 1.csv"
+        self.FILEPATH = self.USERPATH + f"{self.MONTH_NAME}<"
+
         if MOCK_DATA:
             self.USERPATH = "/Users/martin/Desktop/bar-scheduler/"
             self.FILEPATH = self.USERPATH + "mock_data.csv"
 
         base_requirements = {
-            0: {"opening": 2, "middle": 2},  # Monday
-            1: {s: c["default_staff"] for s, c in self.SHIFT_CONFIG.items()},  # Tuesday
-            2: {
-                s: c["default_staff"] for s, c in self.SHIFT_CONFIG.items()
-            },  # Wednesday
-            3: {"opening": 2, "middle": 2, "closing": 2},  # Thursday
-            4: {s: c["default_staff"] for s, c in self.SHIFT_CONFIG.items()},  # Friday
+            0: {"opening": 2, "middle": 2},
+            1: {s: c["default_staff"] for s, c in self.SHIFT_CONFIG.items()},
+            2: {s: c["default_staff"] for s, c in self.SHIFT_CONFIG.items()},
+            3: {"opening": 2, "middle": 2, "closing": 2},
+            4: {s: c["default_staff"] for s, c in self.SHIFT_CONFIG.items()},
         }
         self.WEEKDAY_REQUIREMENTS = base_requirements.copy()
         self.weekend_color = "808080"
@@ -316,18 +316,29 @@ class BarScheduler:
             if self.is_monday(date):
                 schedule[date]["closing"] = None
 
-            for shift_type in self.SHIFT_CONFIG:
-                if schedule[date].get(shift_type) is not None:
+            for shift_type, staff_list in schedule[date].items():
+                if staff_list is not None:
+                    for staff_name in staff_list[:]:
+                        if staff_name not in self.no_reply_members:
+                            staff_shifts = self.staff_availability.get(staff_name, [])
+                            available_shifts = [
+                                s
+                                for d, shifts in staff_shifts
+                                if d == date
+                                for s in shifts
+                            ]
+                            if shift_type not in available_shifts:
+                                print(
+                                    f"Warning: Removing {staff_name} from {shift_type} on {date}"
+                                )
+                                staff_list.remove(staff_name)
+
                     required = self.get_staff_requirement(date, shift_type)
-                    if isinstance(schedule[date][shift_type], list):
-                        current = len(schedule[date][shift_type])
-                        if current > required:
-                            print(
-                                f"Warning: {date} {shift_type} has {current} people, limiting to {required}"
-                            )
-                        schedule[date][shift_type] = schedule[date][shift_type][
-                            :required
-                        ]
+                    if len(staff_list) > required:
+                        print(
+                            f"Warning: {date} {shift_type} has {len(staff_list)} people, limiting to {required}"
+                        )
+                        schedule[date][shift_type] = staff_list[:required]
 
         return schedule
 
@@ -391,12 +402,16 @@ class BarScheduler:
                 continue
 
             random.shuffle(availability)
-            for date, shifts in availability:
+            for date, available_shifts in availability:
                 if not (
                     self.is_weekend(date)
                     or self.check_consecutive_days(schedule, staff_name, date, dates)
                 ):
-                    valid_shifts = self.get_available_shifts(date)
+                    valid_shifts = [
+                        shift
+                        for shift in available_shifts
+                        if shift in self.get_available_shifts(date)
+                    ]
                     if self._try_assign_shift(schedule, date, valid_shifts, staff_name):
                         if self._count_shifts(schedule, staff_name) >= shifts_needed:
                             break
@@ -423,11 +438,23 @@ class BarScheduler:
         if self._has_shift_on_date(schedule, date, staff_name):
             return False
 
-        if "morning" in valid_shifts and schedule[date].get("morning") is not None:
+        if staff_name not in self.no_reply_members:
+            staff_shifts = self.staff_availability.get(staff_name, [])
+            available_shifts = [
+                s for d, shifts in staff_shifts if d == date for s in shifts
+            ]
+            valid_shifts = [s for s in valid_shifts if s in available_shifts]
+            if not valid_shifts:
+                return False
+
+        available_shifts = set(valid_shifts)
+
+        if "morning" in available_shifts and schedule[date].get("morning") is not None:
             required = self.get_staff_requirement(date, "morning")
             current = len(schedule[date]["morning"])
             if current < required:
                 schedule[date]["morning"].append(staff_name)
+                print(f"Assigned {staff_name} to morning shift on {date}")
                 return True
 
         other_shifts = [s for s in valid_shifts if s != "morning"]
@@ -438,6 +465,7 @@ class BarScheduler:
                 current = len(schedule[date][shift])
                 if current < required:
                     schedule[date][shift].append(staff_name)
+                    print(f"Assigned {staff_name} to {shift} shift on {date}")
                     return True
 
         return False
@@ -528,7 +556,10 @@ class BarScheduler:
                         availability.append((date, shifts))
                 staff_availability[matched_name] = availability
 
+        self.staff_availability = staff_availability
+
         self.no_reply_members = set(all_members) - responding_members
+
         self.assign_shifts(
             schedule, work_dates, staff_availability, all_members, shifts_needed=1
         )
@@ -698,7 +729,29 @@ class BarScheduler:
         save_path = (
             f"{self.USERPATH}{self.MONTH_NAME.lower()}_schedule_{self.YEAR}.xlsx"
         )
-        print(f"Saving schedule to: {save_path}")
+        for date in schedule:
+            if not self.is_weekend(date):
+                for shift_type, staff_list in schedule[date].items():
+                    if staff_list is not None:
+                        for staff in staff_list:
+                            if staff not in self.no_reply_members:
+                                staff_shifts = staff_availability.get(staff, [])
+                                available_shifts = [
+                                    s
+                                    for d, shifts in staff_shifts
+                                    if d == date
+                                    for s in shifts
+                                ]
+                                if shift_type not in available_shifts:
+                                    print(
+                                        f"Warning: {staff} assigned to {shift_type} shift on {date} but didn't sign up for it!"
+                                    )
+
+            save_path = (
+                f"{self.USERPATH}{self.MONTH_NAME.lower()}_schedule_{self.YEAR}.xlsx"
+            )
+            print(f"\nSaving schedule to: {save_path}")
+            wb.save(save_path)
         wb.save(save_path)
 
 
